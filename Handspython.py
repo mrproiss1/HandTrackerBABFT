@@ -1,3 +1,5 @@
+#"Apple is stinky"
+#-Someone_Air
 import sys
 import subprocess
 import os
