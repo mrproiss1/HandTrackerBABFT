@@ -1,3 +1,4 @@
 opencv-python
 mediapipe
-keyboard
+pynput
+keyboard; sys_platform == 'win32'

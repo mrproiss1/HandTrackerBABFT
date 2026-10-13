@@ -81,7 +81,7 @@ def ensure_pip_available():
 
 
 def run_pip_install(package_name):
-    """Attempt pip install, falling back to --user if system-wide permission is denied."""
+    """Attempt pip install, falling back to --user and PEP 668 flags if needed."""
     cmd = [
         sys.executable,
         "-m",
@@ -107,7 +107,26 @@ def run_pip_install(package_name):
         package_name,
     ]
     res_user = subprocess.run(cmd_user)
-    return res_user.returncode == 0
+    if res_user.returncode == 0:
+        return True
+
+    # Retry with --break-system-packages (for modern Linux / macOS Homebrew PEP 668 environments)
+    if sys.platform != "win32":
+        cmd_pep = [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--prefer-binary",
+            "--disable-pip-version-check",
+            "--break-system-packages",
+            package_name,
+        ]
+        res_pep = subprocess.run(cmd_pep)
+        if res_pep.returncode == 0:
+            return True
+
+    return False
 
 
 def install_missing_packages():
@@ -131,12 +150,12 @@ def install_missing_packages():
         if not success:
             raise SetupError(
                 "Could not install mediapipe.\n"
-                "Possible reasons on Windows 10:\n"
+                "Possible reasons on Windows/macOS/Linux:\n"
                 "- 32-bit Python is running instead of 64-bit Python.\n"
-                "- Missing Microsoft Visual C++ 2015-2022 Redistributable (x64).\n"
+                "- Missing Microsoft Visual C++ 2015-2022 Redistributable (x64) on Windows.\n"
                 "- Pip cannot reach PyPI or wheels are missing for your exact Python version.\n\n"
                 "Fix:\n"
-                "- Download and run HandTracker.exe from GitHub Releases (works out of the box).\n"
+                "- Download and run HandTracker standalone from GitHub Releases.\n"
                 "- Or install 64-bit Python (3.10, 3.11, or 3.12) with pip enabled."
             )
 
@@ -153,24 +172,36 @@ def install_missing_packages():
         if not run_pip_install("opencv-python"):
             raise SetupError(
                 "Could not install opencv-python. "
-                f"Use HandTracker.exe, or install {RECOMMENDED_PYTHON} with pip enabled."
+                f"Use HandTracker executable, or install {RECOMMENDED_PYTHON} with pip enabled."
             )
 
-    # Step 3: Check keyboard
-    need_keyboard = False
-    try:
-        __import__("keyboard")
-    except ImportError:
-        need_keyboard = True
+    # Step 3: Check keyboard input simulator (pynput on macOS/Linux, keyboard or pynput on Windows)
+    need_input_lib = False
+    if sys.platform == "win32":
+        try:
+            __import__("keyboard")
+        except ImportError:
+            try:
+                __import__("pynput")
+            except ImportError:
+                need_input_lib = True
+    else:
+        try:
+            __import__("pynput")
+        except ImportError:
+            need_input_lib = True
 
-    if need_keyboard:
+    if need_input_lib:
         ensure_pip_available()
-        print("Installing missing package: keyboard")
-        if not run_pip_install("keyboard"):
-            raise SetupError(
-                "Could not install keyboard. "
-                f"Use HandTracker.exe, or install {RECOMMENDED_PYTHON} with pip enabled."
-            )
+        target_pkg = "pynput" if sys.platform != "win32" else "keyboard"
+        print(f"Installing missing package: {target_pkg}")
+        if not run_pip_install(target_pkg):
+            alt_pkg = "pynput" if target_pkg == "keyboard" else "keyboard"
+            if not run_pip_install(alt_pkg):
+                raise SetupError(
+                    f"Could not install keyboard simulation library ({target_pkg} or {alt_pkg}).\n"
+                    f"Please install {RECOMMENDED_PYTHON} and run: pip install pynput"
+                )
 
 
 def ensure_hand_model():
@@ -197,7 +228,7 @@ def ensure_hand_model():
 
 
 def launch_fallback_exe():
-    """Look for existing HandTracker.exe and return its path if available."""
+    """Look for existing HandTracker executable and return its path if available."""
     candidates = [
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "release", "HandTracker.exe"),
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist", "HandTracker.exe"),
@@ -207,6 +238,51 @@ def launch_fallback_exe():
         if os.path.isfile(exe):
             return exe
     return None
+
+
+class KeyController:
+    """Cross-platform keyboard input handler supporting pynput and keyboard."""
+
+    def __init__(self):
+        self._pynput_controller = None
+        self._keyboard_module = None
+
+        # Prioritize pynput on macOS and Linux (does not require root)
+        if sys.platform != "win32":
+            try:
+                from pynput.keyboard import Controller
+                self._pynput_controller = Controller()
+            except Exception:
+                pass
+
+        if self._pynput_controller is None:
+            try:
+                import keyboard
+                self._keyboard_module = keyboard
+            except Exception:
+                pass
+
+        if self._keyboard_module is None and self._pynput_controller is None:
+            try:
+                from pynput.keyboard import Controller
+                self._pynput_controller = Controller()
+            except Exception:
+                pass
+
+    def press(self, key_char: str):
+        if self._pynput_controller is not None:
+            self._pynput_controller.press(key_char)
+        elif self._keyboard_module is not None:
+            self._keyboard_module.press(key_char)
+
+    def release(self, key_char: str):
+        if self._pynput_controller is not None:
+            self._pynput_controller.release(key_char)
+        elif self._keyboard_module is not None:
+            self._keyboard_module.release(key_char)
+
+    def is_available(self) -> bool:
+        return self._pynput_controller is not None or self._keyboard_module is not None
 
 
 # --- AUTO-INSTALLER & MODEL CHECKER ---
@@ -244,7 +320,6 @@ try:
     import mediapipe as mp
     from mediapipe.tasks import python
     from mediapipe.tasks.python import vision
-    import keyboard
 except ImportError as error:
     err_str = str(error)
     print("\nImport failed:", error)
@@ -254,6 +329,8 @@ except ImportError as error:
         print("https://aka.ms/vs/17/release/vc_redist.x64.exe")
     input("Press Enter to exit...")
     sys.exit(1)
+
+key_controller = KeyController()
 
 # --- CONFIGURATION ---
 FINGER_KEYS = ['d', 'f', 'g', 'h', 'j']
@@ -411,9 +488,26 @@ def main():
     else:
         print(f"Tracking: {tracked_hand.capitalize()} hand only")
 
-    cap = cv2.VideoCapture(cam_index)
+    # Open camera with cross-platform backend support
+    if sys.platform == "darwin":
+        cap = cv2.VideoCapture(cam_index, cv2.CAP_AVFOUNDATION)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(cam_index)
+    else:
+        cap = cv2.VideoCapture(cam_index)
+
     if not cap.isOpened():
-        print("Error: Could not open camera.")
+        print(f"Error: Could not open camera (index {cam_index}).")
+        if sys.platform == "darwin":
+            print("\nmacOS Camera Permission Tip:")
+            print("- Ensure your Terminal / Python has Camera permission.")
+            print("- Open System Settings -> Privacy & Security -> Camera, and enable Terminal/Python.")
+        elif sys.platform.startswith("linux"):
+            print("\nLinux Camera Permission Tip:")
+            print("- Ensure your user belongs to the 'video' group: sudo usermod -aG video $USER")
+            print("- Verify camera device exists at /dev/video*.")
+        else:
+            print("- Check that the webcam is connected and not in use by another application.")
         return
 
     while cap.isOpened():
@@ -445,10 +539,10 @@ def main():
             for i in range(5):
                 # Update Keys
                 if fingers_active[i] and not current_key_states[i]:
-                    keyboard.press(FINGER_KEYS[i])
+                    key_controller.press(FINGER_KEYS[i])
                     current_key_states[i] = True
                 elif not fingers_active[i] and current_key_states[i]:
-                    keyboard.release(FINGER_KEYS[i])
+                    key_controller.release(FINGER_KEYS[i])
                     current_key_states[i] = False
 
                 # Draw Visual Dots on Tips
@@ -467,7 +561,7 @@ def main():
             # Clear all if hand is gone
             for i in range(5):
                 if current_key_states[i]:
-                    keyboard.release(FINGER_KEYS[i])
+                    key_controller.release(FINGER_KEYS[i])
                     current_key_states[i] = False
 
         cv2.imshow('Hand Tracker Debug', frame)

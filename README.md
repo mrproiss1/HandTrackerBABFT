@@ -107,7 +107,7 @@ The finished app will be created at:
 dist/HandTracker.exe
 ```
 
-Native apps for Linux and macOS need to be built on Linux/macOS. The Python version is included so those users can run it without needing a Windows exe.
+Native apps for Linux and macOS can be built directly on those systems with PyInstaller or via GitHub Actions. The Python launcher (`run_linux_mac.sh`) provides automated virtual environment setup and dependency installation.
 
 ## Debug Window
 
@@ -118,14 +118,27 @@ The camera window shows finger status:
 | Green | Finger is open |
 | Red | Finger is curled and the key is pressed |
 
-## Notes
+## Platform-Specific Notes
 
-- A webcam is required.
-- On some systems, keyboard input may work better if the app is run as administrator.
-- On Linux, keyboard input may require extra permissions or running with `sudo`.
-- On macOS, keyboard input may require Accessibility permission in System Settings.
-- Windows SmartScreen or antivirus may warn because the `.exe` is unsigned.
-- If the camera does not open, try a different camera index.
+### Windows
+- Windows SmartScreen or antivirus may show a warning because the `.exe` is unsigned.
+- If using Python directly, ensure it is 64-bit Python (MediaPipe does not provide 32-bit Windows wheels).
+- If you see a missing DLL error, install the [Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+
+### macOS
+- Run `./run_linux_mac.sh` from Terminal.
+- **Accessibility Permission**: Key simulation requires accessibility permission. Go to **System Settings -> Privacy & Security -> Accessibility**, and ensure Terminal (or your Python IDE) is checked.
+- **Camera Permission**: When prompted, allow camera access, or go to **System Settings -> Privacy & Security -> Camera**.
+
+### Linux (Ubuntu, Debian, Arch, Fedora)
+- Run `bash run_linux_mac.sh`.
+- The launcher automatically creates a local `.venv` environment to prevent `externally-managed-environment` (PEP 668) conflicts.
+- **Keyboard Simulation**: Uses `pynput` natively under X11/XWayland without requiring root or `sudo`.
+- **Camera Access**: Ensure your user is in the `video` group:
+  ```bash
+  sudo usermod -aG video $USER
+  ```
+  Then log out and log back in.
 
 ## License and Credit
 

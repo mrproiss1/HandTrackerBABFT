@@ -1,0 +1,64 @@
+name: Build Cross-Platform Release Assets
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: HandTracker.exe
+            output_name: HandTracker-windows.exe
+          - os: ubuntu-latest
+            artifact_name: HandTracker
+            output_name: HandTracker-linux-x86_64
+          - os: macos-latest
+            artifact_name: HandTracker
+            output_name: HandTracker-macos-arm64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build standalone executable with PyInstaller
+        run: |
+          pyinstaller --clean HandTracker.spec
+
+      - name: Rename and Stage Binary
+        shell: bash
+        run: |
+          mkdir -p release-artifacts
+          if [ -f "dist/${{ matrix.artifact_name }}" ]; then
+            cp "dist/${{ matrix.artifact_name }}" "release-artifacts/${{ matrix.output_name }}"
+          fi
+
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
