@@ -402,79 +402,68 @@ def get_point_distance(point, x, y):
 
 
 def is_thumb_closed(landmarks, closed_finger_count):
+    wrist = landmarks[0]
     thumb_cmc = landmarks[1]
     thumb_mcp = landmarks[2]
-    thumb_tip = landmarks[4]
     thumb_ip = landmarks[3]
-    index_base = landmarks[5]
-    middle_base = landmarks[9]
-    ring_base = landmarks[13]
-    pinky_base = landmarks[17]
-    wrist = landmarks[0]
+    thumb_tip = landmarks[4]
+    index_mcp = landmarks[5]
+    index_pip = landmarks[6]
+    middle_mcp = landmarks[9]
+    ring_mcp = landmarks[13]
+    pinky_mcp = landmarks[17]
 
-    palm_size = max(get_distance(wrist, middle_base), get_distance(index_base, pinky_base), 0.001)
-    palm_center_x = (index_base.x + middle_base.x + ring_base.x + pinky_base.x) / 4
-    palm_center_y = (index_base.y + middle_base.y + ring_base.y + pinky_base.y) / 4
+    palm_size = max(get_distance(wrist, middle_mcp), get_distance(index_mcp, pinky_mcp), 0.001)
 
-    tip_to_palm = get_point_distance(thumb_tip, palm_center_x, palm_center_y)
-    ip_to_palm = get_point_distance(thumb_ip, palm_center_x, palm_center_y)
-    thumb_length = (
-        get_distance(thumb_cmc, thumb_mcp) +
-        get_distance(thumb_mcp, thumb_ip) +
-        get_distance(thumb_ip, thumb_tip)
-    )
-    thumb_reach = get_distance(thumb_cmc, thumb_tip) / max(thumb_length, 0.001)
+    # 1. Fist / Closed Hand check:
+    # When 3 or 4 other fingers are curled down, the hand is closed.
+    # The only exception is a deliberate 'thumbs up' where thumb points straight up and away.
+    if closed_finger_count >= 3:
+        is_thumbs_up = (
+            thumb_tip.y < thumb_mcp.y - palm_size * 0.20 and
+            get_distance(thumb_tip, index_mcp) > palm_size * 0.65 and
+            get_distance(thumb_tip, index_pip) > palm_size * 0.55
+        )
+        if not is_thumbs_up:
+            return True
 
-    palm_x_values = [index_base.x, middle_base.x, ring_base.x, pinky_base.x]
-    palm_y_values = [wrist.y, index_base.y, middle_base.y, ring_base.y, pinky_base.y]
-    palm_width = max(palm_x_values) - min(palm_x_values)
-    palm_height = max(palm_y_values) - min(palm_y_values)
-    thumb_inside_palm_area = (
-        min(palm_x_values) - palm_width * 0.2 <= thumb_tip.x <= max(palm_x_values) + palm_width * 0.2 and
-        min(palm_y_values) - palm_height * 0.35 <= thumb_tip.y <= max(palm_y_values) + palm_height * 0.35
-    )
+    # 2. Distance to pinky base (shrinks significantly when thumb curls across the palm)
+    dist_tip_pinky = get_distance(thumb_tip, pinky_mcp) / palm_size
+    dist_ip_pinky = get_distance(thumb_ip, pinky_mcp) / palm_size
+    if dist_tip_pinky < 0.85 or (dist_tip_pinky < dist_ip_pinky and dist_tip_pinky < 1.05):
+        return True
 
-    near_index_base = get_distance(thumb_tip, index_base) < palm_size * 0.62
-    near_middle_base = get_distance(thumb_tip, middle_base) < palm_size * 0.70
-    near_ring_base = get_distance(thumb_tip, ring_base) < palm_size * 0.78
-    near_pinky_base = get_distance(thumb_tip, pinky_base) < palm_size * 0.70
-    is_near_palm_bases = near_index_base or near_middle_base or near_ring_base or near_pinky_base
+    # 3. Proximity to index / middle finger knuckles (thumb resting against fingers or palm)
+    dist_index_mcp = get_distance(thumb_tip, index_mcp) / palm_size
+    dist_index_pip = get_distance(thumb_tip, index_pip) / palm_size
+    dist_middle_mcp = get_distance(thumb_tip, middle_mcp) / palm_size
+    if dist_index_mcp < 0.58 or dist_index_pip < 0.58 or dist_middle_mcp < 0.68:
+        return True
 
-    open_score = 0
-    if tip_to_palm > palm_size * 1.02:
-        open_score += 1
-    if tip_to_palm > ip_to_palm + palm_size * 0.12:
-        open_score += 1
-    if thumb_reach > 0.76:
-        open_score += 1
-    if (
-        get_distance(thumb_tip, index_base) > palm_size * 0.86 and
-        get_distance(thumb_tip, middle_base) > palm_size * 0.92
-    ):
-        open_score += 1
-    if not thumb_inside_palm_area and not is_near_palm_bases:
-        open_score += 1
+    # 4. Proximity to palm center
+    palm_center_x = (index_mcp.x + middle_mcp.x + ring_mcp.x + pinky_mcp.x) / 4
+    palm_center_y = (index_mcp.y + middle_mcp.y + ring_mcp.y + pinky_mcp.y) / 4
+    tip_to_palm = get_point_distance(thumb_tip, palm_center_x, palm_center_y) / palm_size
+    if tip_to_palm < 0.72:
+        return True
 
-    closed_score = 0
-    if near_pinky_base:
-        closed_score += 2
-    if is_near_palm_bases:
-        closed_score += 1
-    if tip_to_palm < palm_size * 0.72:
-        closed_score += 1
-    if tip_to_palm <= ip_to_palm + palm_size * 0.04:
-        closed_score += 1
-    if thumb_inside_palm_area and closed_finger_count >= 2:
-        closed_score += 1
-    if abs(thumb_tip.x - middle_base.x) < palm_size * 0.18 and tip_to_palm < palm_size * 0.82:
-        closed_score += 1
-    if closed_finger_count >= 3 and (thumb_inside_palm_area or is_near_palm_bases):
-        closed_score += 1
+    # 5. Distance to wrist (curling thumb down toward palm base)
+    if get_distance(thumb_tip, wrist) < get_distance(thumb_ip, wrist) * 0.95 and tip_to_palm < 0.90:
+        return True
 
-    if open_score >= 3 and closed_score < 4:
-        return False
+    # 6. Joint Angle at Thumb IP (sharp bend in thumb joint)
+    v1 = (thumb_ip.x - thumb_mcp.x, thumb_ip.y - thumb_mcp.y)
+    v2 = (thumb_tip.x - thumb_ip.x, thumb_tip.y - thumb_ip.y)
+    len1 = math.hypot(v1[0], v1[1])
+    len2 = math.hypot(v2[0], v2[1])
+    if len1 > 0 and len2 > 0:
+        cos_angle = (v1[0] * v2[0] + v1[1] * v2[1]) / (len1 * len2)
+        # Cosine < 0.60 indicates the thumb joint is bent (> 53 degrees)
+        if cos_angle < 0.60 and dist_tip_pinky < 1.15:
+            return True
 
-    return closed_score >= 3
+    return False
+
 
 
 def main():
