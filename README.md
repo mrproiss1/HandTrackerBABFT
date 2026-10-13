@@ -35,11 +35,14 @@ The `.exe` version is standalone. You do not need to install Python or any Pytho
 
 This works on Windows, Linux, and macOS if Python is installed.
 
-`Handspython.py` can set itself up the first time it runs:
+`Handspython.py` can install missing Python packages the first time it runs:
 
 - If Python packages are missing, it tries to install them with `pip`.
-- If `hand_landmarker.task` is missing, it downloads the model automatically.
-- Internet is needed for first-time setup.
+- `hand_landmarker.task` will be automatically downloaded if missing, or you can place it in the same folder.
+- Internet is needed only if Python packages or the AI model are missing.
+- **Important for Windows 10/11**: You must use **64-bit Python** (Python 3.10, 3.11, or 3.12 64-bit). MediaPipe does not provide 32-bit Windows wheels.
+- If you encounter a C++ DLL error, install the [Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+- If you do not want to install Python, just download and run `HandTracker.exe` from Releases.
 
 ### Easy Run
 
@@ -57,7 +60,13 @@ sh run_linux_mac.sh
 
 ### Manual Run
 
-Run the Python file:
+Make sure this file is in the same folder:
+
+```text
+hand_landmarker.task
+```
+
+Then run the Python file:
 
 ```powershell
 python Handspython.py
@@ -69,7 +78,7 @@ If you prefer to install the packages yourself first:
 pip install -r requirements.txt
 ```
 
-The model file `hand_landmarker.task` is included in this repo, but the script can download it again if it is missing.
+The model file `hand_landmarker.task` is required for the Python version.
 
 When the app starts, it asks which hand to track:
 

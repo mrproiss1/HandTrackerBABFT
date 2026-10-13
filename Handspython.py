@@ -1,24 +1,50 @@
-#"Apple is stinky"
-#-Someone_Air
 import sys
 import subprocess
 import os
-import urllib.request
 import math
+import struct
+import urllib.request
 
 MODEL_FILENAME = "hand_landmarker.task"
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
-REQUIRED_PACKAGES = [
-    ('opencv-python', 'cv2'),
-    ('mediapipe', 'mediapipe'),
-    ('keyboard', 'keyboard'),
-]
+MIN_MODEL_SIZE_BYTES = 1000000
+RECOMMENDED_PYTHON = "Python 3.10 - 3.12 (64-bit)"
+
+
+class SetupError(RuntimeError):
+    pass
 
 
 def resource_path(relative_path):
     if getattr(sys, "frozen", False):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+
+
+def check_python_architecture():
+    """Verify that Python is 64-bit. MediaPipe does not support 32-bit Windows."""
+    if struct.calcsize("P") * 8 == 32:
+        if os.name == "nt":
+            try:
+                probe = subprocess.run(
+                    ["py", "-3-64", "-c", "import struct, sys; sys.exit(0 if struct.calcsize('P')*8 == 64 else 1)"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if probe.returncode == 0:
+                    print("Notice: Current interpreter is 32-bit. Relaunching with 64-bit Python...")
+                    target_script = os.path.abspath(__file__)
+                    sys.exit(subprocess.call(["py", "-3-64", target_script] + sys.argv[1:]))
+            except Exception:
+                pass
+
+        raise SetupError(
+            f"You are running 32-bit Python ({sys.version.split()[0]} 32-bit).\n"
+            "MediaPipe does NOT support 32-bit Python on Windows.\n"
+            "Fix:\n"
+            "- Easiest: download and run HandTracker.exe from GitHub Releases (no Python required).\n"
+            "- Or install 64-bit Python from https://www.python.org/downloads/ (select 'Windows installer (64-bit)')."
+        )
 
 
 def ensure_pip_available():
@@ -30,50 +56,160 @@ def ensure_pip_available():
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
         print("pip was not found. Trying to enable pip...")
-        subprocess.check_call([sys.executable, "-m", "ensurepip", "--upgrade"])
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "ensurepip", "--upgrade"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except subprocess.CalledProcessError as error:
+            raise SetupError(
+                "Could not enable pip for this Python install. "
+                f"Use HandTracker.exe, or install {RECOMMENDED_PYTHON} with pip enabled."
+            ) from error
+
+    # Upgrade pip and packaging tools quietly so modern wheel tags resolve cleanly
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel", "--quiet"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
+def run_pip_install(package_name):
+    """Attempt pip install, falling back to --user if system-wide permission is denied."""
+    cmd = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--prefer-binary",
+        "--disable-pip-version-check",
+        package_name,
+    ]
+    res = subprocess.run(cmd)
+    if res.returncode == 0:
+        return True
+
+    # Retry with --user (common permission failure on Windows Program Files without admin privileges)
+    cmd_user = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--prefer-binary",
+        "--disable-pip-version-check",
+        "--user",
+        package_name,
+    ]
+    res_user = subprocess.run(cmd_user)
+    return res_user.returncode == 0
 
 
 def install_missing_packages():
-    missing_packages = []
-    for package, import_name in REQUIRED_PACKAGES:
-        try:
-            __import__(import_name)
-        except ImportError:
-            missing_packages.append(package)
+    check_python_architecture()
 
-    if not missing_packages:
-        return
+    # Step 1: Check and install mediapipe first (it brings opencv-contrib-python)
+    need_mediapipe = False
+    try:
+        __import__("mediapipe")
+    except ImportError:
+        need_mediapipe = True
 
-    ensure_pip_available()
-    for package in missing_packages:
-        print(f"Installing missing package: {package}")
-        subprocess.check_call([
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            package,
-        ])
+    if need_mediapipe:
+        ensure_pip_available()
+        print("Installing missing package: mediapipe")
+        success = False
+        for candidate in ["mediapipe", "mediapipe>=0.10.0", "mediapipe<=0.10.35"]:
+            if run_pip_install(candidate):
+                success = True
+                break
+        if not success:
+            raise SetupError(
+                "Could not install mediapipe.\n"
+                "Possible reasons on Windows 10:\n"
+                "- 32-bit Python is running instead of 64-bit Python.\n"
+                "- Missing Microsoft Visual C++ 2015-2022 Redistributable (x64).\n"
+                "- Pip cannot reach PyPI or wheels are missing for your exact Python version.\n\n"
+                "Fix:\n"
+                "- Download and run HandTracker.exe from GitHub Releases (works out of the box).\n"
+                "- Or install 64-bit Python (3.10, 3.11, or 3.12) with pip enabled."
+            )
+
+    # Step 2: Check opencv (cv2) - mediapipe usually supplies opencv-contrib-python
+    need_cv2 = False
+    try:
+        __import__("cv2")
+    except ImportError:
+        need_cv2 = True
+
+    if need_cv2:
+        ensure_pip_available()
+        print("Installing missing package: opencv-python")
+        if not run_pip_install("opencv-python"):
+            raise SetupError(
+                "Could not install opencv-python. "
+                f"Use HandTracker.exe, or install {RECOMMENDED_PYTHON} with pip enabled."
+            )
+
+    # Step 3: Check keyboard
+    need_keyboard = False
+    try:
+        __import__("keyboard")
+    except ImportError:
+        need_keyboard = True
+
+    if need_keyboard:
+        ensure_pip_available()
+        print("Installing missing package: keyboard")
+        if not run_pip_install("keyboard"):
+            raise SetupError(
+                "Could not install keyboard. "
+                f"Use HandTracker.exe, or install {RECOMMENDED_PYTHON} with pip enabled."
+            )
 
 
 def ensure_hand_model():
     model_path = resource_path(MODEL_FILENAME)
-    model_folder = os.path.dirname(model_path)
-    if model_folder:
-        os.makedirs(model_folder, exist_ok=True)
-
-    model_exists = os.path.exists(model_path) and os.path.getsize(model_path) > 1000000
-    if model_exists:
+    if os.path.exists(model_path) and os.path.getsize(model_path) > MIN_MODEL_SIZE_BYTES:
         return
 
-    print("Downloading AI hand model...")
-    temp_path = model_path + ".download"
-    urllib.request.urlretrieve(MODEL_URL, temp_path)
-    os.replace(temp_path, model_path)
+    print("AI hand model not found or incomplete. Downloading hand_landmarker.task...")
+    try:
+        temp_path = model_path + ".download"
+        urllib.request.urlretrieve(MODEL_URL, temp_path)
+        if os.path.exists(temp_path) and os.path.getsize(temp_path) > MIN_MODEL_SIZE_BYTES:
+            os.replace(temp_path, model_path)
+            print("AI hand model downloaded successfully.")
+            return
+    except Exception as e:
+        print(f"Warning: Failed to auto-download model: {e}")
+
+    if not (os.path.exists(model_path) and os.path.getsize(model_path) > MIN_MODEL_SIZE_BYTES):
+        raise SetupError(
+            f"{MODEL_FILENAME} is missing. Put {MODEL_FILENAME} in the same folder as Handspython.py, "
+            "then run the script again."
+        )
 
 
-# --- AUTO-INSTALLER & MODEL DOWNLOADER ---
+def launch_fallback_exe():
+    """Look for existing HandTracker.exe and return its path if available."""
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "release", "HandTracker.exe"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist", "HandTracker.exe"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "HandTracker.exe"),
+    ]
+    for exe in candidates:
+        if os.path.isfile(exe):
+            return exe
+    return None
+
+
+# --- AUTO-INSTALLER & MODEL CHECKER ---
 def setup_environment():
     if getattr(sys, "frozen", False):
         return
@@ -86,16 +222,38 @@ try:
     setup_environment()
 except Exception as error:
     print("\nAutomatic setup failed.")
-    print("Make sure Python has internet access, then run this again.")
     print(f"Error: {error}")
+    print("\nFix:")
+    print("- Easiest on Windows: download and run HandTracker.exe from Releases.")
+    print(f"- Source users: install {RECOMMENDED_PYTHON} with pip enabled.")
+    print(f"- Make sure {MODEL_FILENAME} is in the same folder as Handspython.py.")
+
+    fallback_exe = launch_fallback_exe()
+    if fallback_exe:
+        print(f"\nFound standalone executable at: {fallback_exe}")
+        choice = input("Would you like to start the standalone HandTracker.exe instead? (Y/n): ").strip().lower()
+        if choice in ("", "y", "yes"):
+            subprocess.Popen([fallback_exe])
+            sys.exit(0)
+
     input("Press Enter to exit...")
     sys.exit(1)
 
-import cv2
-import mediapipe as mp
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
-import keyboard
+try:
+    import cv2
+    import mediapipe as mp
+    from mediapipe.tasks import python
+    from mediapipe.tasks.python import vision
+    import keyboard
+except ImportError as error:
+    err_str = str(error)
+    print("\nImport failed:", error)
+    if "DLL load failed" in err_str:
+        print("\nNote: Windows is missing the Microsoft Visual C++ Redistributable.")
+        print("Please download and install it from:")
+        print("https://aka.ms/vs/17/release/vc_redist.x64.exe")
+    input("Press Enter to exit...")
+    sys.exit(1)
 
 # --- CONFIGURATION ---
 FINGER_KEYS = ['d', 'f', 'g', 'h', 'j']
