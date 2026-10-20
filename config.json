@@ -1,0 +1,16 @@
+{
+    "camera_index": 0,
+    "tracked_hand": "both",
+    "keybinds": {
+        "thumb": "d",
+        "index": "f",
+        "middle": "g",
+        "ring": "h",
+        "pinky": "j"
+    },
+    "show_fps": true,
+    "smoothing": true,
+    "flip_camera": true,
+    "detection_confidence": 0.7
+}
+

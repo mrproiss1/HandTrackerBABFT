@@ -4,11 +4,51 @@ import os
 import math
 import struct
 import urllib.request
+import json
+import time
+import argparse
 
 MODEL_FILENAME = "hand_landmarker.task"
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 MIN_MODEL_SIZE_BYTES = 1000000
 RECOMMENDED_PYTHON = "Python 3.10 - 3.12 (64-bit)"
+CONFIG_FILENAME = "config.json"
+
+DEFAULT_CONFIG = {
+    "camera_index": 0,
+    "tracked_hand": "both",
+    "keybinds": {
+        "thumb": "d",
+        "index": "f",
+        "middle": "g",
+        "ring": "h",
+        "pinky": "j",
+    },
+    "show_fps": True,
+    "smoothing": True,
+    "flip_camera": True,
+    "detection_confidence": 0.7,
+}
+
+# MediaPipe Hand Connections (Pairs of landmark indices to render hand skeleton)
+HAND_CONNECTIONS = [
+    # Thumb
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    # Index finger
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    # Middle finger
+    (9, 10), (10, 11), (11, 12), (0, 9),
+    # Ring finger
+    (13, 14), (14, 15), (15, 16), (0, 13),
+    # Pinky finger
+    (17, 18), (18, 19), (19, 20), (0, 17),
+    # Palm knuckles
+    (5, 9), (9, 13), (13, 17),
+]
+
+TIP_IDS = [4, 8, 12, 16, 20]
+JOINT_IDS = [2, 6, 10, 14, 18]
+FINGER_NAMES = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
 
 
 class SetupError(RuntimeError):
@@ -19,6 +59,41 @@ def resource_path(relative_path):
     if getattr(sys, "frozen", False):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+
+
+def get_base_dir():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def load_or_create_config():
+    config_path = os.path.join(get_base_dir(), CONFIG_FILENAME)
+    config = dict(DEFAULT_CONFIG)
+
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                user_cfg = json.load(f)
+                if isinstance(user_cfg, dict):
+                    if "keybinds" in user_cfg and isinstance(user_cfg["keybinds"], dict):
+                        merged_keys = dict(DEFAULT_CONFIG["keybinds"])
+                        merged_keys.update(user_cfg["keybinds"])
+                        user_cfg["keybinds"] = merged_keys
+                    config.update(user_cfg)
+            return config
+        except Exception as e:
+            print(f"Notice: Could not parse {CONFIG_FILENAME} ({e}). Using default settings.")
+            return config
+
+    # Auto-generate default configuration file for ease of customization
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_CONFIG, f, indent=4)
+    except Exception:
+        pass
+
+    return config
 
 
 def check_python_architecture():
@@ -159,7 +234,7 @@ def install_missing_packages():
                 "- Or install 64-bit Python (3.10, 3.11, or 3.12) with pip enabled."
             )
 
-    # Step 2: Check opencv (cv2) - mediapipe usually supplies opencv-contrib-python
+    # Step 2: Check opencv (cv2)
     need_cv2 = False
     try:
         __import__("cv2")
@@ -230,9 +305,9 @@ def ensure_hand_model():
 def launch_fallback_exe():
     """Look for existing HandTracker executable and return its path if available."""
     candidates = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "release", "HandTracker.exe"),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist", "HandTracker.exe"),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "HandTracker.exe"),
+        os.path.join(get_base_dir(), "release", "HandTracker.exe"),
+        os.path.join(get_base_dir(), "dist", "HandTracker.exe"),
+        os.path.join(get_base_dir(), "HandTracker.exe"),
     ]
     for exe in candidates:
         if os.path.isfile(exe):
@@ -245,13 +320,15 @@ class KeyController:
 
     def __init__(self):
         self._pynput_controller = None
+        self._pynput_key_cls = None
         self._keyboard_module = None
 
         # Prioritize pynput on macOS and Linux (does not require root)
         if sys.platform != "win32":
             try:
-                from pynput.keyboard import Controller
+                from pynput.keyboard import Controller, Key
                 self._pynput_controller = Controller()
+                self._pynput_key_cls = Key
             except Exception:
                 pass
 
@@ -264,22 +341,56 @@ class KeyController:
 
         if self._keyboard_module is None and self._pynput_controller is None:
             try:
-                from pynput.keyboard import Controller
+                from pynput.keyboard import Controller, Key
                 self._pynput_controller = Controller()
+                self._pynput_key_cls = Key
             except Exception:
                 pass
 
+    def _resolve_pynput_key(self, key_str: str):
+        if not self._pynput_key_cls:
+            return key_str
+        k = key_str.strip().lower()
+        special_map = {
+            "space": self._pynput_key_cls.space,
+            "enter": self._pynput_key_cls.enter,
+            "return": self._pynput_key_cls.enter,
+            "shift": self._pynput_key_cls.shift,
+            "ctrl": self._pynput_key_cls.ctrl,
+            "control": self._pynput_key_cls.ctrl,
+            "alt": self._pynput_key_cls.alt,
+            "tab": self._pynput_key_cls.tab,
+            "esc": self._pynput_key_cls.esc,
+            "escape": self._pynput_key_cls.esc,
+            "up": self._pynput_key_cls.up,
+            "down": self._pynput_key_cls.down,
+            "left": self._pynput_key_cls.left,
+            "right": self._pynput_key_cls.right,
+            "backspace": self._pynput_key_cls.backspace,
+        }
+        return special_map.get(k, key_str)
+
     def press(self, key_char: str):
-        if self._pynput_controller is not None:
-            self._pynput_controller.press(key_char)
-        elif self._keyboard_module is not None:
-            self._keyboard_module.press(key_char)
+        try:
+            if self._pynput_controller is not None:
+                self._pynput_controller.press(self._resolve_pynput_key(key_char))
+            elif self._keyboard_module is not None:
+                self._keyboard_module.press(key_char)
+        except Exception:
+            pass
 
     def release(self, key_char: str):
-        if self._pynput_controller is not None:
-            self._pynput_controller.release(key_char)
-        elif self._keyboard_module is not None:
-            self._keyboard_module.release(key_char)
+        try:
+            if self._pynput_controller is not None:
+                self._pynput_controller.release(self._resolve_pynput_key(key_char))
+            elif self._keyboard_module is not None:
+                self._keyboard_module.release(key_char)
+        except Exception:
+            pass
+
+    def release_all(self, key_list):
+        for k in key_list:
+            self.release(k)
 
     def is_available(self) -> bool:
         return self._pynput_controller is not None or self._keyboard_module is not None
@@ -330,33 +441,10 @@ except ImportError as error:
     input("Press Enter to exit...")
     sys.exit(1)
 
-key_controller = KeyController()
 
-# --- CONFIGURATION ---
-FINGER_KEYS = ['d', 'f', 'g', 'h', 'j']
-finger_names = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
-current_key_states = [False] * 5
-
-# Landmarks for tips: Thumb(4), Index(8), Middle(12), Ring(16), Pinky(20)
-TIP_IDS = [4, 8, 12, 16, 20]
-# Landmarks for joints to compare against
-JOINT_IDS = [2, 6, 10, 14, 18] 
-
-# Initialize MediaPipe Tasks
-base_options = python.BaseOptions(model_asset_path=resource_path('hand_landmarker.task'))
-options = vision.HandLandmarkerOptions(
-    base_options=base_options,
-    num_hands=2,
-    min_hand_detection_confidence=0.7,
-    min_hand_presence_confidence=0.7,
-    min_tracking_confidence=0.7
-)
-detector = vision.HandLandmarker.create_from_options(options)
-
-
-def ask_tracked_hand():
+def ask_tracked_hand(default_hand="both"):
     choices = {
-        "": "both",
+        "": default_hand,
         "b": "both",
         "both": "both",
         "l": "left",
@@ -366,7 +454,8 @@ def ask_tracked_hand():
     }
 
     while True:
-        choice = input("Choose hand to track: left/right/both (Default both): ").strip().lower()
+        prompt = f"Choose hand to track: left/right/both (Default {default_hand}): "
+        choice = input(prompt).strip().lower()
         if choice in choices:
             return choices[choice]
         print("Please enter left, right, or both.")
@@ -465,17 +554,167 @@ def is_thumb_closed(landmarks, closed_finger_count):
     return False
 
 
+def draw_hand_skeleton(frame, landmarks, w, h):
+    """Render smooth bones and joints connecting hand landmarks."""
+    # Convert landmarks to pixel coordinates
+    pts = [(int(lm.x * w), int(lm.y * h)) for lm in landmarks]
+
+    # Draw connection bones
+    for p1, p2 in HAND_CONNECTIONS:
+        if p1 < len(pts) and p2 < len(pts):
+            cv2.line(frame, pts[p1], pts[p2], (210, 210, 210), 2, cv2.LINE_AA)
+
+    # Draw subtle joint points
+    for idx, (x, y) in enumerate(pts):
+        if idx not in TIP_IDS:
+            cv2.circle(frame, (x, y), 4, (180, 180, 180), -1, cv2.LINE_AA)
+
+
+def draw_hud(frame, w, h, fps, tracked_hand, detected_hand, finger_keys, current_key_states, show_fps):
+    """Render professional semi-transparent HUD overlay."""
+    # Top status bar background
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (w, 42), (20, 20, 20), -1)
+    cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+
+    # Top status text
+    status_text = "RED = PRESSED | GREEN = OPEN"
+    cv2.putText(frame, status_text, (15, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (240, 240, 240), 1, cv2.LINE_AA)
+
+    hand_label = f"HAND: {detected_hand.upper() if detected_hand else 'NONE'}"
+    cv2.putText(frame, hand_label, (w // 2 - 60, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 215, 0), 1, cv2.LINE_AA)
+
+    if show_fps:
+        fps_text = f"FPS: {int(fps)}"
+        cv2.putText(frame, fps_text, (w - 110, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 200), 1, cv2.LINE_AA)
+
+    # Bottom Keybinds HUD
+    card_width = 86
+    spacing = 10
+    total_w = 5 * card_width + 4 * spacing
+    start_x = max(10, (w - total_w) // 2)
+    card_y1 = h - 50
+    card_y2 = h - 12
+
+    for i in range(5):
+        cx1 = start_x + i * (card_width + spacing)
+        cx2 = cx1 + card_width
+        is_active = current_key_states[i]
+
+        # Active = Red highlight, Inactive = Dark slate with subtle green outline
+        bg_col = (40, 40, 180) if is_active else (35, 35, 35)
+        border_col = (0, 0, 255) if is_active else (0, 200, 0)
+
+        cv2.rectangle(frame, (cx1, card_y1), (cx2, card_y2), bg_col, -1)
+        cv2.rectangle(frame, (cx1, card_y1), (cx2, card_y2), border_col, 2)
+
+        key_label = f"{FINGER_NAMES[i][:3]}:{finger_keys[i].upper()}"
+        cv2.putText(frame, key_label, (cx1 + 8, card_y1 + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+
+
+def parse_arguments(config):
+    parser = argparse.ArgumentParser(
+        description="HandTracker - Real-time webcam hand tracking keyboard input simulator."
+    )
+    parser.add_argument(
+        "--camera",
+        type=int,
+        default=None,
+        help="Webcam camera index (default from config or prompt).",
+    )
+    parser.add_argument(
+        "--hand",
+        choices=["both", "left", "right"],
+        default=None,
+        help="Which hand to track (both, left, or right).",
+    )
+    parser.add_argument(
+        "--keys",
+        type=str,
+        default=None,
+        help="Comma-separated keys for [thumb,index,middle,ring,pinky], e.g. 'd,f,g,h,j'.",
+    )
+    parser.add_argument(
+        "--no-flip",
+        action="store_true",
+        help="Disable camera horizontal mirror flipping.",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run without displaying the OpenCV debug window for maximum efficiency.",
+    )
+    parser.add_argument(
+        "--no-fps",
+        action="store_true",
+        help="Hide FPS counter in the overlay.",
+    )
+    return parser.parse_args()
+
 
 def main():
-    print("=== Virtual Hand Tracker (FULL VISUAL DEBUG) ===")
-    cam_index = input("Enter camera index (Default 0): ")
-    cam_index = int(cam_index) if cam_index.isdigit() else 0
-    tracked_hand = ask_tracked_hand()
+    print("=== HandTracker BABFT (Virtual Hand Gesture Controller) ===")
+    config = load_or_create_config()
+    args = parse_arguments(config)
 
-    if tracked_hand == "both":
-        print("Tracking: any detected hand")
+    # Camera index determination
+    if args.camera is not None:
+        cam_index = args.camera
     else:
-        print(f"Tracking: {tracked_hand.capitalize()} hand only")
+        cam_input = input(f"Enter camera index (Default {config.get('camera_index', 0)}): ").strip()
+        cam_index = int(cam_input) if cam_input.isdigit() else config.get("camera_index", 0)
+
+    # Tracked hand determination
+    if args.hand is not None:
+        tracked_hand = args.hand
+    else:
+        tracked_hand = ask_tracked_hand(default_hand=config.get("tracked_hand", "both"))
+
+    # Keybinds determination
+    key_dict = config.get("keybinds", DEFAULT_CONFIG["keybinds"])
+    finger_keys = [
+        str(key_dict.get("thumb", "d")),
+        str(key_dict.get("index", "f")),
+        str(key_dict.get("middle", "g")),
+        str(key_dict.get("ring", "h")),
+        str(key_dict.get("pinky", "j")),
+    ]
+
+    if args.keys:
+        custom_keys = [k.strip() for k in args.keys.split(",") if k.strip()]
+        if len(custom_keys) == 5:
+            finger_keys = custom_keys
+        else:
+            print(f"Warning: --keys requires exactly 5 comma-separated keys. Using: {finger_keys}")
+
+    flip_camera = not args.no_flip and config.get("flip_camera", True)
+    show_fps = not args.no_fps and config.get("show_fps", True)
+    smoothing = config.get("smoothing", True)
+    detection_conf = float(config.get("detection_confidence", 0.7))
+
+    print(f"\nConfiguration loaded:")
+    print(f"- Camera Index: {cam_index}")
+    print(f"- Tracking Hand: {tracked_hand.capitalize()}")
+    print(f"- Keybinds: Thumb={finger_keys[0].upper()}, Index={finger_keys[1].upper()}, "
+          f"Middle={finger_keys[2].upper()}, Ring={finger_keys[3].upper()}, Pinky={finger_keys[4].upper()}")
+    print(f"- Display Mirror: {'Enabled' if flip_camera else 'Disabled'}")
+    print(f"- Headless Mode: {'Enabled' if args.headless else 'Disabled'}")
+    print("Starting hand detector...\n")
+
+    key_controller = KeyController()
+    current_key_states = [False] * 5
+    consecutive_active = [0] * 5
+
+    # Initialize MediaPipe Tasks HandLandmarker
+    base_options = python.BaseOptions(model_asset_path=resource_path(MODEL_FILENAME))
+    options = vision.HandLandmarkerOptions(
+        base_options=base_options,
+        num_hands=2,
+        min_hand_detection_confidence=detection_conf,
+        min_hand_presence_confidence=detection_conf,
+        min_tracking_confidence=detection_conf,
+    )
+    detector = vision.HandLandmarker.create_from_options(options)
 
     # Open camera with cross-platform backend support
     if sys.platform == "darwin":
@@ -499,66 +738,105 @@ def main():
             print("- Check that the webcam is connected and not in use by another application.")
         return
 
-    while cap.isOpened():
-        success, frame = cap.read()
-        if not success: break
+    fps = 0.0
+    prev_time = time.time()
 
-        h, w, _ = frame.shape
-        frame = cv2.flip(frame, 1)
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-        
-        detection_result = detector.detect(mp_image)
-        fingers_active = [0] * 5
-        landmarks, detected_hand = get_selected_hand(detection_result, tracked_hand)
+    try:
+        while cap.isOpened():
+            success, frame = cap.read()
+            if not success:
+                break
 
-        if landmarks:
-            # --- OTHER FINGERS LOGIC ---
-            for i in range(1, 5):
-                tip = landmarks[TIP_IDS[i]]
-                joint = landmarks[JOINT_IDS[i]]
-                if tip.y > joint.y: # Finger is curled down
-                    fingers_active[i] = 1
+            h, w, _ = frame.shape
+            if flip_camera:
+                frame = cv2.flip(frame, 1)
 
-            # --- THUMB LOGIC ---
-            if is_thumb_closed(landmarks, sum(fingers_active[1:])):
-                fingers_active[0] = 1
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
-            # --- KEYPRESS & VISUAL FEEDBACK ---
-            for i in range(5):
-                # Update Keys
-                if fingers_active[i] and not current_key_states[i]:
-                    key_controller.press(FINGER_KEYS[i])
-                    current_key_states[i] = True
-                elif not fingers_active[i] and current_key_states[i]:
-                    key_controller.release(FINGER_KEYS[i])
-                    current_key_states[i] = False
+            detection_result = detector.detect(mp_image)
+            raw_active = [0] * 5
+            landmarks, detected_hand = get_selected_hand(detection_result, tracked_hand)
 
-                # Draw Visual Dots on Tips
-                tip_coords = (int(landmarks[TIP_IDS[i]].x * w), int(landmarks[TIP_IDS[i]].y * h))
-                color = (0, 0, 255) if fingers_active[i] else (0, 255, 0) # Red if Pressed, Green if Up
-                cv2.circle(frame, tip_coords, 10, color, -1)
-                cv2.putText(frame, FINGER_KEYS[i].upper(), (tip_coords[0]-5, tip_coords[1]+5), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            if landmarks:
+                # --- OTHER FINGERS LOGIC (Index, Middle, Ring, Pinky) ---
+                for i in range(1, 5):
+                    tip = landmarks[TIP_IDS[i]]
+                    joint = landmarks[JOINT_IDS[i]]
+                    if tip.y > joint.y:  # Finger is curled down
+                        raw_active[i] = 1
 
-            # Header Status
-            cv2.putText(frame, "RED = PRESSED | GREEN = OPEN", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            if detected_hand:
-                cv2.putText(frame, f"TRACKING: {detected_hand.upper()} HAND", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            
-        else:
-            # Clear all if hand is gone
-            for i in range(5):
-                if current_key_states[i]:
-                    key_controller.release(FINGER_KEYS[i])
-                    current_key_states[i] = False
+                # --- THUMB LOGIC ---
+                if is_thumb_closed(landmarks, sum(raw_active[1:])):
+                    raw_active[0] = 1
 
-        cv2.imshow('Hand Tracker Debug', frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+                # Smooth / Debounce states to prevent jitter near threshold
+                for i in range(5):
+                    if raw_active[i]:
+                        consecutive_active[i] = min(consecutive_active[i] + 1, 5)
+                    else:
+                        consecutive_active[i] = max(consecutive_active[i] - 1, 0)
 
-    cap.release()
-    cv2.destroyAllWindows()
+                    target_state = (consecutive_active[i] >= 2) if smoothing else bool(raw_active[i])
+
+                    # Update key states
+                    if target_state and not current_key_states[i]:
+                        key_controller.press(finger_keys[i])
+                        current_key_states[i] = True
+                    elif not target_state and current_key_states[i]:
+                        key_controller.release(finger_keys[i])
+                        current_key_states[i] = False
+
+                # Visual Rendering (if not headless)
+                if not args.headless:
+                    draw_hand_skeleton(frame, landmarks, w, h)
+
+                    for i in range(5):
+                        tip_coords = (int(landmarks[TIP_IDS[i]].x * w), int(landmarks[TIP_IDS[i]].y * h))
+                        color = (0, 0, 255) if current_key_states[i] else (0, 255, 0)
+                        cv2.circle(frame, tip_coords, 10, color, -1, cv2.LINE_AA)
+                        cv2.circle(frame, tip_coords, 12, (255, 255, 255), 1, cv2.LINE_AA)
+                        cv2.putText(
+                            frame,
+                            finger_keys[i].upper(),
+                            (tip_coords[0] - 5, tip_coords[1] + 5),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.45,
+                            (255, 255, 255),
+                            1,
+                            cv2.LINE_AA,
+                        )
+            else:
+                # Clear all active keys if no hand detected
+                for i in range(5):
+                    if current_key_states[i]:
+                        key_controller.release(finger_keys[i])
+                        current_key_states[i] = False
+                    consecutive_active[i] = 0
+
+            # FPS computation
+            curr_time = time.time()
+            time_diff = curr_time - prev_time
+            if time_diff > 0:
+                fps = 0.9 * fps + 0.1 * (1.0 / time_diff)
+            prev_time = curr_time
+
+            # Show window if GUI active
+            if not args.headless:
+                draw_hud(frame, w, h, fps, tracked_hand, detected_hand, finger_keys, current_key_states, show_fps)
+                cv2.imshow("HandTracker BABFT Debug", frame)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+
+    except KeyboardInterrupt:
+        print("\nStopping HandTracker...")
+    finally:
+        # Guarantee all pressed keys are released on exit
+        key_controller.release_all(finger_keys)
+        cap.release()
+        cv2.destroyAllWindows()
+        print("HandTracker stopped cleanly. All keys released.")
+
 
 if __name__ == "__main__":
     main()

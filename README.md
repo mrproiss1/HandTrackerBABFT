@@ -1,152 +1,178 @@
-# HandTracker
+# HandTracker BABFT
 
-HandTracker is a webcam hand-tracking tool that turns finger curls into keyboard inputs.
+HandTracker BABFT is a real-time computer vision tool that turns human hand gestures and finger curls into keyboard inputs, designed specifically for controlling builds, mechanics, servos, thrusters, and contraptions in **Roblox: Build a Boat for Treasure (BABFT)** and other games.
 
-It uses OpenCV and MediaPipe to detect one hand in real time. When you curl a finger, the app presses a matching keyboard key. When you open the finger again, the key is released.
+It uses OpenCV and Google MediaPipe to track hand landmarks in real time. When you curl a finger, the assigned key is pressed down; when you open your finger back up, the key is immediately released.
 
-The thumb detection also checks for a closed fist, so the thumb should count as pressed when it is tucked across the palm.
+---
 
-## Keybinds
+## Features
 
-| Finger | Key |
-| --- | --- |
-| Thumb | D |
-| Index | F |
-| Middle | G |
-| Ring | H |
-| Pinky | J |
+- **Real-Time Hand Landmark Tracking**: Tracks thumb, index, middle, ring, and pinky finger positions at high frame rates.
+- **Visual Hand Skeleton HUD**: Renders real-time bone connections, joint indicators, and status badges.
+- **Customizable Keybinds (`config.json`)**: Easily change the assigned key for each finger without modifying Python code.
+- **Special Key Support**: Supports single characters (`d`, `f`, `g`, `h`, `j`) as well as special keys like `space`, `enter`, `shift`, `ctrl`, `alt`, `tab`, and arrow keys (`up`, `down`, `left`, `right`).
+- **Fist & Thumb Intelligence**: Sophisticated thumb curl detection that recognizes closed fists, thumb tucks, and deliberate thumbs-up gestures.
+- **Anti-Jitter Smoothing**: Debouncing filter to prevent keystroke fluttering when hovering near boundary angles.
+- **Safe Key Release Guarantee**: Clean `try...finally` teardown ensures all pressed keys are instantly released when the app exits, preventing stuck keys.
+- **Command Line Flags**: Supports `--camera`, `--hand`, `--keys`, `--headless`, and `--no-flip` for quick automation and streaming setups.
+- **Cross-Platform**: Works natively on Windows, macOS, and Linux.
 
-## How to Use the EXE
+---
 
-1. Download `HandTracker.exe` from the release or `dist` folder.
-2. Run `HandTracker.exe`.
-3. Enter your camera index.
-   - Most webcams use `0`.
-   - If `0` does not work, try `1` or `2`.
-4. Choose which hand should control the keys.
-   - Type `left`, `right`, or `both`.
-   - Press Enter to use the default: `both`.
-5. Curl your fingers to press the matching keys.
-6. Press `Q` in the camera window to quit.
+## Default Keybinds
 
-The `.exe` version is standalone. You do not need to install Python or any Python libraries.
+| Finger | Default Key | Suggested BABFT Control |
+|---|---|---|
+| **Thumb** | `D` | Steer Right / Mechanism 1 |
+| **Index** | `F` | Activate Tool / Thruster |
+| **Middle** | `G` | Harpoon / Launch / Magnet |
+| **Ring** | `H` | Custom Mechanism 2 |
+| **Pinky** | `J` | Steer Left / Reset |
 
-## How to Run From Source
+> [!TIP]
+> You can customize any key in `config.json` or pass custom keys via command line (`--keys space,f,g,h,j`).
 
-This works on Windows, Linux, and macOS if Python is installed.
+---
 
-`Handspython.py` can install missing Python packages the first time it runs:
+## Configuration (`config.json`)
 
-- If Python packages are missing, it tries to install them with `pip`.
-- `hand_landmarker.task` will be automatically downloaded if missing, or you can place it in the same folder.
-- Internet is needed only if Python packages or the AI model are missing.
-- **Important for Windows 10/11**: You must use **64-bit Python** (Python 3.10, 3.11, or 3.12 64-bit). MediaPipe does not provide 32-bit Windows wheels.
-- If you encounter a C++ DLL error, install the [Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
-- If you do not want to install Python, just download and run `HandTracker.exe` from Releases.
+On first launch, `config.json` is automatically loaded or created next to the application:
 
-### Easy Run
-
-Windows:
-
-```text
-Double-click run_windows.bat
+```json
+{
+    "camera_index": 0,
+    "tracked_hand": "both",
+    "keybinds": {
+        "thumb": "d",
+        "index": "f",
+        "middle": "g",
+        "ring": "h",
+        "pinky": "j"
+    },
+    "show_fps": true,
+    "smoothing": true,
+    "flip_camera": true,
+    "detection_confidence": 0.7
+}
 ```
 
-Linux/macOS:
+- `camera_index`: Webcam index (`0` is usually the default internal/USB webcam).
+- `tracked_hand`: `"both"`, `"left"`, or `"right"`.
+- `keybinds`: Any keyboard character or named key (`"space"`, `"shift"`, etc.).
+- `show_fps`: Shows real-time tracking FPS on the HUD overlay.
+- `smoothing`: Enables 2-frame debouncing to eliminate jitter near curl thresholds.
+- `flip_camera`: Mirrors the camera horizontally so left/right moves feel natural.
+- `detection_confidence`: Landmark detection and tracking confidence score (`0.5` to `0.9`).
 
-```sh
-sh run_linux_mac.sh
-```
+---
 
-### Manual Run
+## How to Run
 
-Make sure this file is in the same folder:
+### Option 1: Standalone Executable (Windows)
+1. Download `HandTracker.exe` from the latest **Releases**.
+2. Run `HandTracker.exe` (no Python or libraries required).
+3. Select your camera index and hand tracking preference (or press Enter for defaults).
+4. Curl your fingers to trigger the keys in-game. Press **Q** in the camera window to quit.
 
-```text
-hand_landmarker.task
-```
+### Option 2: Running from Source (Windows / macOS / Linux)
 
-Then run the Python file:
-
+#### Windows
+Double-click `run_windows.bat` or run in terminal:
 ```powershell
 python Handspython.py
 ```
 
-If you prefer to install the packages yourself first:
+#### Linux & macOS
+Run the automated launcher:
+```bash
+bash run_linux_mac.sh
+```
 
-```powershell
+#### Command Line Arguments
+```bash
+# Launch camera 1 tracking right hand with custom keys:
+python Handspython.py --camera 1 --hand right --keys space,f,g,h,j
+
+# Run in headless mode (no video window, minimal CPU/GPU usage):
+python Handspython.py --camera 0 --headless
+```
+
+---
+
+## Requirements & Setup
+
+If installing dependencies manually:
+```bash
 pip install -r requirements.txt
 ```
 
-The model file `hand_landmarker.task` is required for the Python version.
+### Dependencies:
+- `opencv-python`
+- `mediapipe`
+- `pynput`
+- `keyboard` (Windows fallback)
 
-When the app starts, it asks which hand to track:
+> [!IMPORTANT]
+> **Windows**: Requires **64-bit Python** (Python 3.10 - 3.12). MediaPipe does not support 32-bit Python on Windows.
+> If you encounter a C++ runtime error, install the [Microsoft Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 
-```text
-Choose hand to track: left/right/both (Default both):
-```
+---
 
-## Building the EXE
+## Building the Executable
 
-Install the runtime packages and PyInstaller:
+To compile a standalone binary for distribution:
 
 ```powershell
 pip install -r requirements.txt
 pip install pyinstaller
+pyinstaller --clean HandTracker.spec
 ```
 
-Build the standalone Windows exe:
+The compiled binary will be placed in `dist/HandTracker.exe`.
 
-```powershell
-pyinstaller --clean --onefile --noupx --name HandTracker --add-data "hand_landmarker.task;." --collect-data mediapipe Handspython.py
-```
+---
 
-The finished app will be created at:
+## Visual HUD Legend
+
+| Indicator | Meaning |
+|---|---|
+| **Green Dot** | Finger is open / idle (key released) |
+| **Red Dot** | Finger is curled / active (key pressed) |
+| **Grey Bones** | Hand skeleton tracked in 3D space |
+| **Bottom Cards** | Live keybind status cards for each finger |
+
+---
+
+## License & Attribution
+
+This project is licensed under the **HandTracker Attribution License**.
 
 ```text
-dist/HandTracker.exe
-```
+HandTracker Attribution License
 
-Native apps for Linux and macOS can be built directly on those systems with PyInstaller or via GitHub Actions. The Python launcher (`run_linux_mac.sh`) provides automated virtual environment setup and dependency installation.
+Copyright (c) 2026 mrproiss1
 
-## Debug Window
+Permission is granted to use, copy, modify, and share this project for
+personal or public use, subject to the conditions below.
 
-The camera window shows finger status:
+If you post a video, stream, tutorial, showcase, review, or other public
+media featuring this project, you must clearly credit:
 
-| Color | Meaning |
-| --- | --- |
-| Green | Finger is open |
-| Red | Finger is curled and the key is pressed |
-
-## Platform-Specific Notes
-
-### Windows
-- Windows SmartScreen or antivirus may show a warning because the `.exe` is unsigned.
-- If using Python directly, ensure it is 64-bit Python (MediaPipe does not provide 32-bit Windows wheels).
-- If you see a missing DLL error, install the [Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
-
-### macOS
-- Run `./run_linux_mac.sh` from Terminal.
-- **Accessibility Permission**: Key simulation requires accessibility permission. Go to **System Settings -> Privacy & Security -> Accessibility**, and ensure Terminal (or your Python IDE) is checked.
-- **Camera Permission**: When prompted, allow camera access, or go to **System Settings -> Privacy & Security -> Camera**.
-
-### Linux (Ubuntu, Debian, Arch, Fedora)
-- Run `bash run_linux_mac.sh`.
-- The launcher automatically creates a local `.venv` environment to prevent `externally-managed-environment` (PEP 668) conflicts.
-- **Keyboard Simulation**: Uses `pynput` natively under X11/XWayland without requiring root or `sudo`.
-- **Camera Access**: Ensure your user is in the `video` group:
-  ```bash
-  sudo usermod -aG video $USER
-  ```
-  Then log out and log back in.
-
-## License and Credit
-
-This project uses the HandTracker Attribution License.
-
-If you post a video, stream, tutorial, showcase, review, or other public media featuring this project, you must clearly credit:
-
-```text
 Created by mrproiss1
 GitHub: https://github.com/mrproiss1
+
+The credit must be visible in the video itself and clearly place it in the
+video description.
+
+You may not claim this project as your own original work.
+
+This project is provided "as is", without warranty of any kind, express or
+implied. The author is not liable for any damages or issues caused by use of
+this project.
 ```
+
+### Video / Stream Credit Requirements
+If you feature this project in a TikTok, YouTube video, YouTube Short, Twitch stream, tutorial, or review:
+1. **In-Video Credit**: "Created by mrproiss1" must appear on screen.
+2. **Description Credit**: Include a direct link to `https://github.com/mrproiss1` in the description.
