@@ -6,6 +6,45 @@ It uses OpenCV and Google MediaPipe to track hand landmarks in real time. When y
 
 ---
 
+# 📜 LICENSE & ATTRIBUTION REQUIREMENTS
+
+> [!IMPORTANT]
+> ### **mrproiss1 Attribution License**
+> This project is licensed under the custom **mrproiss1 Attribution License**. You are free to use, modify, and share this tool for both personal and public use under the mandatory attribution terms below.
+
+```text
+==================================================================================
+                          mrproiss1 Attribution License
+                           Copyright (c) 2026 mrproiss1
+==================================================================================
+
+Permission is granted to use, copy, modify, and share this project for
+personal or public use, subject to the conditions below.
+
+If you post a video, stream, tutorial, showcase, review, or other public
+media featuring this project, you must clearly credit:
+
+    Created by mrproiss1
+    GitHub: https://github.com/mrproiss1
+
+1. The credit must be VISIBLE in the video itself (on screen).
+2. Clearly place the credit and GitHub link in the video description.
+3. You may NOT claim this project as your own original work.
+
+This project is provided "as is", without warranty of any kind, express or
+implied. The author is not liable for any damages or issues caused by use of
+this project.
+==================================================================================
+```
+
+### 🎬 Mandatory Content Creator Checklist (YouTube, TikTok, Twitch, Kick)
+If you feature this software in any video, stream, tutorial, or showcase:
+- [x] **On-Screen Display**: Display **"Created by mrproiss1"** visibly in your video.
+- [x] **Video Description**: Include **`Created by mrproiss1 | GitHub: https://github.com/mrproiss1`** in the top section of your video description.
+- [x] **Originality**: Do not claim ownership, originality, or creation of this tracking tool.
+
+---
+
 ## Features
 
 - **Real-Time Hand Landmark Tracking**: Tracks thumb, index, middle, ring, and pinky finger positions at high frame rates.
@@ -57,14 +96,6 @@ On first launch, `config.json` is automatically loaded or created next to the ap
 }
 ```
 
-- `camera_index`: Webcam index (`0` is usually the default internal/USB webcam).
-- `tracked_hand`: `"both"`, `"left"`, or `"right"`.
-- `keybinds`: Any keyboard character or named key (`"space"`, `"shift"`, etc.).
-- `show_fps`: Shows real-time tracking FPS on the HUD overlay.
-- `smoothing`: Enables 2-frame debouncing to eliminate jitter near curl thresholds.
-- `flip_camera`: Mirrors the camera horizontally so left/right moves feel natural.
-- `detection_confidence`: Landmark detection and tracking confidence score (`0.5` to `0.9`).
-
 ---
 
 ## How to Run
@@ -102,7 +133,6 @@ python Handspython.py --camera 0 --headless
 
 ## Requirements & Setup
 
-If installing dependencies manually:
 ```bash
 pip install -r requirements.txt
 ```
@@ -113,15 +143,9 @@ pip install -r requirements.txt
 - `pynput`
 - `keyboard` (Windows fallback)
 
-> [!IMPORTANT]
-> **Windows**: Requires **64-bit Python** (Python 3.10 - 3.12). MediaPipe does not support 32-bit Python on Windows.
-> If you encounter a C++ runtime error, install the [Microsoft Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
-
 ---
 
 ## Building the Executable
-
-To compile a standalone binary for distribution:
 
 ```powershell
 pip install -r requirements.txt
@@ -130,49 +154,3 @@ pyinstaller --clean HandTracker.spec
 ```
 
 The compiled binary will be placed in `dist/HandTracker.exe`.
-
----
-
-## Visual HUD Legend
-
-| Indicator | Meaning |
-|---|---|
-| **Green Dot** | Finger is open / idle (key released) |
-| **Red Dot** | Finger is curled / active (key pressed) |
-| **Grey Bones** | Hand skeleton tracked in 3D space |
-| **Bottom Cards** | Live keybind status cards for each finger |
-
----
-
-## License & Attribution
-
-This project is licensed under the **HandTracker Attribution License**.
-
-```text
-HandTracker Attribution License
-
-Copyright (c) 2026 mrproiss1
-
-Permission is granted to use, copy, modify, and share this project for
-personal or public use, subject to the conditions below.
-
-If you post a video, stream, tutorial, showcase, review, or other public
-media featuring this project, you must clearly credit:
-
-Created by mrproiss1
-GitHub: https://github.com/mrproiss1
-
-The credit must be visible in the video itself and clearly place it in the
-video description.
-
-You may not claim this project as your own original work.
-
-This project is provided "as is", without warranty of any kind, express or
-implied. The author is not liable for any damages or issues caused by use of
-this project.
-```
-
-### Video / Stream Credit Requirements
-If you feature this project in a TikTok, YouTube video, YouTube Short, Twitch stream, tutorial, or review:
-1. **In-Video Credit**: "Created by mrproiss1" must appear on screen.
-2. **Description Credit**: Include a direct link to `https://github.com/mrproiss1` in the description.
